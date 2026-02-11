@@ -233,11 +233,28 @@ func parseAWSCLIArgs(args []string) *policy.ObservedCall {
 		return nil
 	}
 
+	// Extract resource from arguments
+	resource := extractResourceFromArgs(service, command, args)
+
 	// Map CLI command to IAM action
 	action := cliCommandToAction(service, command)
 
-	// Extract resource from arguments
-	resource := extractResourceFromArgs(service, command, args)
+	// Special case: s3 ls - depends on whether bucket is specified
+	if service == "s3" && command == "ls" {
+		hasS3Path := false
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "s3://") {
+				hasS3Path = true
+				break
+			}
+		}
+		if hasS3Path {
+			action = "ListBucket"
+		} else {
+			action = "ListAllMyBuckets"
+			resource = "*"
+		}
+	}
 
 	return &policy.ObservedCall{
 		Service:  service,
@@ -247,18 +264,19 @@ func parseAWSCLIArgs(args []string) *policy.ObservedCall {
 }
 
 // cliCommandToAction maps AWS CLI commands to IAM actions.
+// For S3 ls, we need args to determine if it's ListAllMyBuckets or ListBucket
 func cliCommandToAction(service, command string) string {
 	// Special mappings for services where CLI commands don't match IAM actions
+	// Note: s3 ls is handled specially in parseAWSCLIArgs
 	s3Actions := map[string]string{
-		"ls":       "ListBucket",
-		"cp":       "PutObject", // Could be GetObject too, determined by direction
-		"mv":       "PutObject",
-		"rm":       "DeleteObject",
-		"mb":       "CreateBucket",
-		"rb":       "DeleteBucket",
-		"sync":     "PutObject",
-		"presign":  "GetObject",
-		"website":  "PutBucketWebsite",
+		"cp":      "PutObject", // Could be GetObject too, determined by direction
+		"mv":      "PutObject",
+		"rm":      "DeleteObject",
+		"mb":      "CreateBucket",
+		"rb":      "DeleteBucket",
+		"sync":    "PutObject",
+		"presign": "GetObject",
+		"website": "PutBucketWebsite",
 	}
 
 	if service == "s3" {

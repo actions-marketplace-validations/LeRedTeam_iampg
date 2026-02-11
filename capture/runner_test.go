@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestParseAWSCLIArgs_S3Ls(t *testing.T) {
+func TestParseAWSCLIArgs_S3LsBucket(t *testing.T) {
 	args := []string{"aws", "s3", "ls", "s3://my-bucket/"}
 
 	call := parseAWSCLIArgs(args)
@@ -20,6 +20,22 @@ func TestParseAWSCLIArgs_S3Ls(t *testing.T) {
 	}
 	if call.Resource != "arn:aws:s3:::my-bucket/*" {
 		t.Errorf("expected resource arn:aws:s3:::my-bucket/*, got %s", call.Resource)
+	}
+}
+
+func TestParseAWSCLIArgs_S3LsAllBuckets(t *testing.T) {
+	args := []string{"aws", "s3", "ls"}
+
+	call := parseAWSCLIArgs(args)
+
+	if call == nil {
+		t.Fatal("expected call, got nil")
+	}
+	if call.Action != "ListAllMyBuckets" {
+		t.Errorf("expected action ListAllMyBuckets, got %s", call.Action)
+	}
+	if call.Resource != "*" {
+		t.Errorf("expected resource *, got %s", call.Resource)
 	}
 }
 
@@ -127,8 +143,8 @@ func TestParseAWSCLIArgs_TooShort(t *testing.T) {
 }
 
 func TestCliCommandToAction_S3(t *testing.T) {
+	// Note: "ls" is handled specially in parseAWSCLIArgs, not here
 	tests := map[string]string{
-		"ls":      "ListBucket",
 		"cp":      "PutObject",
 		"mv":      "PutObject",
 		"rm":      "DeleteObject",
