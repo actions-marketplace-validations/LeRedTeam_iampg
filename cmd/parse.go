@@ -17,17 +17,24 @@ var parseError string
 var parseStdin bool
 var parseOutput string
 var parseFormat string
+var parseResourceName string
 
 var parseCmd = &cobra.Command{
 	Use:   "parse",
 	Short: "Parse CloudTrail logs or AccessDenied errors to generate IAM policy",
 	Long: `Parse existing AWS logs or error messages to generate IAM policies.
 
+Formats:
+  json       JSON policy document (free)
+  yaml       YAML policy document (pro)
+  terraform  Terraform aws_iam_policy resource (pro)
+  sarif      SARIF report for CI integration (pro)
+
 Examples:
   iampg parse --cloudtrail trail.json
   iampg parse --error "User: arn:aws:iam::123:user/dev is not authorized to perform: s3:GetObject on resource: arn:aws:s3:::bucket/key"
-  cat errors.txt | iampg parse --stdin
-  iampg parse --cloudtrail trail.json --output policy.json`,
+  iampg parse --cloudtrail trail.json --format terraform
+  cat errors.txt | iampg parse --stdin`,
 	RunE: runParse,
 }
 
@@ -37,7 +44,8 @@ func init() {
 	parseCmd.Flags().StringVar(&parseError, "error", "", "AccessDenied error message")
 	parseCmd.Flags().BoolVar(&parseStdin, "stdin", false, "Read input from stdin")
 	parseCmd.Flags().StringVarP(&parseOutput, "output", "o", "", "Write policy to file (default: stdout)")
-	parseCmd.Flags().StringVarP(&parseFormat, "format", "f", "json", "Output format: json")
+	parseCmd.Flags().StringVarP(&parseFormat, "format", "f", "json", "Output format: json, yaml, terraform, sarif")
+	parseCmd.Flags().StringVar(&parseResourceName, "resource-name", "generated_policy", "Terraform resource name")
 }
 
 func runParse(cmd *cobra.Command, args []string) error {
@@ -103,18 +111,9 @@ func runParse(cmd *cobra.Command, args []string) error {
 	// Generate policy
 	doc := policy.Generate(calls)
 
-	output, err := doc.ToJSON()
-	if err != nil {
-		return fmt.Errorf("failed to generate policy JSON: %w", err)
-	}
-
-	if parseOutput != "" {
-		if err := os.WriteFile(parseOutput, output, 0644); err != nil {
-			return fmt.Errorf("failed to write policy to %s: %w", parseOutput, err)
-		}
-		fmt.Fprintf(os.Stderr, "Policy written to %s\n", parseOutput)
-	} else {
-		fmt.Println(string(output))
+	// Output the policy
+	if err := outputPolicy(doc, parseFormat, parseOutput, parseResourceName); err != nil {
+		return err
 	}
 
 	if len(calls) == 0 {

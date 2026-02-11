@@ -69,20 +69,20 @@ iampg parse --stdin
 
 ---
 
-## Paid Features (To Build)
+## Paid Features
 
 | Feature | Status |
 |---------|--------|
 | License validation | ✅ Done |
-| `refine` command | ❌ Pending |
-| Terraform output | ❌ Pending |
-| YAML output | ❌ Pending |
-| SARIF output | ❌ Pending |
-| Multi-run aggregation | ❌ Pending |
-| CI enforcement mode | ❌ Pending |
-| Wildcard detection | ❌ Pending |
-| Scoping suggestions | ❌ Pending |
-| Policy diff | ❌ Pending |
+| `refine` command | ✅ Done |
+| Terraform output | ✅ Done |
+| YAML output | ✅ Done |
+| SARIF output | ✅ Done |
+| Multi-run aggregation | ✅ Done |
+| CI enforcement mode | ✅ Done |
+| Wildcard detection | ✅ Done |
+| Scoping suggestions | ✅ Done |
+| Policy diff | ✅ Done |
 
 ## Not In Scope
 

@@ -12,6 +12,7 @@ import (
 var runOutput string
 var runFormat string
 var runVerbose bool
+var runResourceName string
 
 var runCmd = &cobra.Command{
 	Use:   "run -- <command>",
@@ -19,10 +20,16 @@ var runCmd = &cobra.Command{
 	Long: `Execute a command while capturing AWS API calls made during execution.
 Generates a minimal IAM policy granting only the observed permissions.
 
+Formats:
+  json       JSON policy document (free)
+  yaml       YAML policy document (pro)
+  terraform  Terraform aws_iam_policy resource (pro)
+  sarif      SARIF report for CI integration (pro)
+
 Example:
   iampg run -- aws s3 ls
   iampg run -- aws s3 cp file.txt s3://bucket/
-  iampg run --output policy.json -- terraform apply
+  iampg run --format terraform -- terraform apply
   iampg run -v -- python deploy.py`,
 	DisableFlagsInUseLine: true,
 	Args:                  cobra.MinimumNArgs(1),
@@ -32,8 +39,9 @@ Example:
 func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().StringVarP(&runOutput, "output", "o", "", "Write policy to file (default: stdout)")
-	runCmd.Flags().StringVarP(&runFormat, "format", "f", "json", "Output format: json")
+	runCmd.Flags().StringVarP(&runFormat, "format", "f", "json", "Output format: json, yaml, terraform, sarif")
 	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", false, "Show captured AWS calls")
+	runCmd.Flags().StringVar(&runResourceName, "resource-name", "generated_policy", "Terraform resource name")
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
@@ -49,18 +57,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	doc := policy.Generate(calls)
 
 	// Output the policy
-	output, err := doc.ToJSON()
-	if err != nil {
-		return fmt.Errorf("failed to generate policy JSON: %w", err)
-	}
-
-	if runOutput != "" {
-		if err := os.WriteFile(runOutput, output, 0644); err != nil {
-			return fmt.Errorf("failed to write policy to %s: %w", runOutput, err)
-		}
-		fmt.Fprintf(os.Stderr, "Policy written to %s\n", runOutput)
-	} else {
-		fmt.Println(string(output))
+	if err := outputPolicy(doc, runFormat, runOutput, runResourceName); err != nil {
+		return err
 	}
 
 	// Report on captured calls
