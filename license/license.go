@@ -52,7 +52,7 @@ var (
 // This is the PUBLIC key - safe to embed in the binary
 // Generate a new keypair with: iampg license generate-keypair
 // Override with -ldflags "-X github.com/LeRedTeam/iampg/license.publicKeyBase64=..."
-var publicKeyBase64 = "D8SYNZ6mXq-BmXFoW5V50bB5cWvcrHPtjYNWMsI5etk"
+var publicKeyBase64 = "ReQfxJ3z-YxhjVvFT1jT5qZTiCJjHSDV4bmVt9p8YoM"
 
 var cachedLicense *License
 
