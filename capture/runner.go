@@ -233,6 +233,14 @@ func parseAWSCLIArgs(args []string) *policy.ObservedCall {
 		return nil
 	}
 
+	// Map CLI service names to IAM service names
+	serviceMapping := map[string]string{
+		"s3api": "s3",
+	}
+	if mapped, ok := serviceMapping[service]; ok {
+		service = mapped
+	}
+
 	// Extract resource from arguments
 	resource := extractResourceFromArgs(service, command, args)
 
@@ -316,6 +324,7 @@ func extractResourceFromArgs(service, command string, args []string) string {
 }
 
 func extractS3Resource(args []string) string {
+	// Check for s3:// paths first (s3 CLI style)
 	var s3Paths []string
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "s3://") {
@@ -323,24 +332,41 @@ func extractS3Resource(args []string) string {
 		}
 	}
 
-	if len(s3Paths) == 0 {
-		return "arn:aws:s3:::*"
+	if len(s3Paths) > 0 {
+		// Parse first S3 path (for ls, this is the target)
+		path := strings.TrimPrefix(s3Paths[0], "s3://")
+		path = strings.TrimSuffix(path, "/")
+		parts := strings.SplitN(path, "/", 2)
+		bucket := parts[0]
+
+		if bucket == "" {
+			return "arn:aws:s3:::*"
+		}
+		if len(parts) > 1 && parts[1] != "" {
+			return "arn:aws:s3:::" + bucket + "/" + parts[1]
+		}
+		return "arn:aws:s3:::" + bucket + "/*"
 	}
 
-	// Parse first S3 path (for ls, this is the target)
-	path := strings.TrimPrefix(s3Paths[0], "s3://")
-	path = strings.TrimSuffix(path, "/")
-	parts := strings.SplitN(path, "/", 2)
-	bucket := parts[0]
+	// Check for --bucket and --key flags (s3api CLI style)
+	var bucket, key string
+	for i, arg := range args {
+		if arg == "--bucket" && i+1 < len(args) {
+			bucket = args[i+1]
+		}
+		if arg == "--key" && i+1 < len(args) {
+			key = args[i+1]
+		}
+	}
 
-	if bucket == "" {
-		return "arn:aws:s3:::*"
+	if bucket != "" {
+		if key != "" {
+			return "arn:aws:s3:::" + bucket + "/" + key
+		}
+		return "arn:aws:s3:::" + bucket
 	}
-	if len(parts) > 1 && parts[1] != "" {
-		return "arn:aws:s3:::" + bucket + "/" + parts[1]
-	}
-	// For bucket-level operations, need both bucket and bucket/* resources
-	return "arn:aws:s3:::" + bucket + "/*"
+
+	return "arn:aws:s3:::*"
 }
 
 func extractDynamoDBResource(args []string) string {

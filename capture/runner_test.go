@@ -142,6 +142,44 @@ func TestParseAWSCLIArgs_TooShort(t *testing.T) {
 	}
 }
 
+func TestParseAWSCLIArgs_S3API_HeadObject(t *testing.T) {
+	args := []string{"aws", "s3api", "head-object", "--bucket", "my-bucket", "--key", "path/to/file.txt"}
+
+	call := parseAWSCLIArgs(args)
+
+	if call == nil {
+		t.Fatal("expected call, got nil")
+	}
+	if call.Service != "s3" {
+		t.Errorf("expected service s3, got %s", call.Service)
+	}
+	if call.Action != "HeadObject" {
+		t.Errorf("expected action HeadObject, got %s", call.Action)
+	}
+	if call.Resource != "arn:aws:s3:::my-bucket/path/to/file.txt" {
+		t.Errorf("expected resource with bucket and key, got %s", call.Resource)
+	}
+}
+
+func TestParseAWSCLIArgs_S3API_ListObjectsV2(t *testing.T) {
+	args := []string{"aws", "s3api", "list-objects-v2", "--bucket", "my-bucket"}
+
+	call := parseAWSCLIArgs(args)
+
+	if call == nil {
+		t.Fatal("expected call, got nil")
+	}
+	if call.Service != "s3" {
+		t.Errorf("expected service s3, got %s", call.Service)
+	}
+	if call.Action != "ListObjectsV2" {
+		t.Errorf("expected action ListObjectsV2, got %s", call.Action)
+	}
+	if call.Resource != "arn:aws:s3:::my-bucket" {
+		t.Errorf("expected resource with bucket only, got %s", call.Resource)
+	}
+}
+
 func TestCliCommandToAction_S3(t *testing.T) {
 	// Note: "ls" is handled specially in parseAWSCLIArgs, not here
 	tests := map[string]string{
