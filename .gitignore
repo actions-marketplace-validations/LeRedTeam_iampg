@@ -19,3 +19,4 @@ coverage.out
 # Build
 dist/
 .claude/settings.local.json
+.claude/
