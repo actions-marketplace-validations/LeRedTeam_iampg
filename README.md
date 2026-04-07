@@ -1,164 +1,284 @@
 # iampg - IAM Auto-Policy Generator
 
-Generate minimal IAM policies by observing AWS API calls or parsing logs.
+**Enforce least-privilege IAM in every PR.**
 
-Stop guessing IAM permissions. Run your code, get your policy.
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](COPYING)
+[![CI](https://github.com/LeRedTeam/iampg/actions/workflows/ci.yaml/badge.svg)](https://github.com/LeRedTeam/iampg/actions/workflows/ci.yaml)
+[![Sponsor](https://img.shields.io/github/sponsors/LeRedTeam?label=Sponsor)](https://github.com/sponsors/LeRedTeam)
 
-## GitHub Action
+---
+
+## The Problem
+
+IAM policies drift. Permissions creep. Nobody catches it until a security audit.
+
+Developers either:
+- Over-permission with `AdministratorAccess` because debugging `AccessDenied` takes hours
+- Copy-paste wildcard policies from StackOverflow and forget about them
+
+**iampg** fixes both sides:
+1. **Generate** minimal policies by observing real AWS API calls
+2. **Enforce** least-privilege standards in your CI/CD pipeline before merge
+
+---
+
+## Quick Start: CI/CD Enforcement
+
+Add policy enforcement to your pipeline in 30 seconds:
 
 ```yaml
-- name: Generate IAM Policy
-  uses: LeRedTeam/iampg@v1
-  with:
-    mode: parse
-    cloudtrail: ./cloudtrail-logs.json
-    output: policy.json
+# .github/workflows/iam-check.yml
+name: IAM Policy Check
 
-- name: Upload policy
-  uses: actions/upload-artifact@v4
-  with:
-    name: iam-policy
-    path: policy.json
+on: [pull_request]
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: LeRedTeam/iampg@v1
+        with:
+          mode: refine
+          input: infra/iam-policy.json
+          enforce: true
+          license-key: ${{ secrets.IAMPG_LICENSE_KEY }}
 ```
 
-## Installation
+This fails the PR if the policy contains:
+- Wildcard actions (`s3:*`)
+- Wildcard resources (`*`)
+- Dangerous permissions (`iam:CreateUser`, `iam:AttachPolicy`)
+- Admin-level access
+
+### Generate + Enforce (two-step)
+
+```yaml
+jobs:
+  iam:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: us-east-1
+
+      # Step 1: Generate policy from actual AWS calls
+      - uses: LeRedTeam/iampg@v1
+        with:
+          mode: run
+          command: python deploy.py --dry-run
+          output: generated-policy.json
+
+      # Step 2: Enforce security standards
+      - uses: LeRedTeam/iampg@v1
+        with:
+          mode: refine
+          input: generated-policy.json
+          enforce: true
+          license-key: ${{ secrets.IAMPG_LICENSE_KEY }}
+```
+
+---
+
+## Quick Start: CLI
 
 ```bash
-# Download latest release
-curl -sSL https://github.com/LeRedTeam/iampg/releases/latest/download/iampg_$(uname -s)_$(uname -m).tar.gz | tar xz
-chmod +x iampg
+# Install latest release
+VERSION=$(curl -sSL -o /dev/null -w '%{url_effective}' https://github.com/LeRedTeam/iampg/releases/latest | grep -oE '[^/]+$')
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); [ "$ARCH" = "x86_64" ] && ARCH="amd64"; [ "$ARCH" = "aarch64" ] && ARCH="arm64"
+curl -sSL "https://github.com/LeRedTeam/iampg/releases/download/${VERSION}/iampg_${VERSION#v}_${OS}_${ARCH}.tar.gz" | tar xz
 sudo mv iampg /usr/local/bin/
 
-# Or build from source
+# Or build from source (note: license validation uses dev key, not production key)
 go install github.com/LeRedTeam/iampg@latest
 ```
 
-## Usage
-
-### Capture from AWS CLI commands (Free)
+### Generate a policy
 
 ```bash
-# Run an AWS command and generate the required policy
-iampg run -- aws s3 ls s3://my-bucket/
-iampg run -- aws dynamodb put-item --table-name Users --item '{"id":{"S":"1"}}'
-
-# Save to file
-iampg run --output policy.json -- aws s3 cp file.txt s3://bucket/
-
-# Verbose mode (show captured calls)
-iampg run -v -- aws lambda invoke --function-name MyFunc out.json
-```
-
-### Parse AccessDenied errors (Free)
-
-```bash
-# Parse a single error message
-iampg parse --error "User: arn:aws:iam::123:user/dev is not authorized to perform: s3:GetObject on resource: arn:aws:s3:::bucket/key"
-
-# Parse multiple errors from a file
-cat errors.log | iampg parse --stdin
-
-# Parse CloudTrail logs
-iampg parse --cloudtrail trail.json
-```
-
-### Output Formats
-
-```bash
-# JSON (free)
-iampg run -- aws s3 ls s3://bucket/
-
-# YAML (pro)
-iampg run --format yaml -- aws s3 ls s3://bucket/
-
-# Terraform (pro)
-iampg run --format terraform --resource-name my_policy -- aws s3 ls s3://bucket/
-
-# SARIF for CI integration (pro)
-iampg run --format sarif -- aws s3 ls s3://bucket/
-```
-
-### Analyze & Refine Policies (Pro)
-
-```bash
-# Analyze a policy for security issues
-iampg refine --input policy.json
-
-# Compare policies (drift detection)
-iampg refine --input current.json --compare baseline.json
-
-# CI enforcement mode (exit 1 if issues found)
-iampg refine --input policy.json --enforce
-```
-
-### Aggregate Multiple Policies (Pro)
-
-```bash
-# Combine policies from multiple runs
-iampg aggregate --files policy1.json,policy2.json --output combined.json
-```
-
-## Commands
-
-| Command | Description | Tier |
-|---------|-------------|------|
-| `run -- <cmd>` | Execute command and capture AWS API calls | Free |
-| `parse` | Parse CloudTrail logs or AccessDenied errors | Free |
-| `refine` | Analyze policies for security issues | Pro |
-| `aggregate` | Combine multiple policies into one | Pro |
-
-## Output Formats
-
-| Format | Description | Tier |
-|--------|-------------|------|
-| `json` | Standard IAM policy JSON | Free |
-| `yaml` | YAML policy document | Pro |
-| `terraform` | Terraform aws_iam_policy resource | Pro |
-| `sarif` | SARIF report for CI security scanners | Pro |
-
-## Pro Features
-
-- **Wildcard Detection**: Find overly broad `*` permissions
-- **Scoping Suggestions**: Get recommendations to tighten permissions
-- **Policy Diff**: Compare policies and detect drift
-- **CI Enforcement**: Fail builds with overly broad policies
-- **Multi-format Output**: YAML, Terraform, SARIF
-- **Policy Aggregation**: Combine multiple policies
-
-Set your license key:
-```bash
-export IAMPG_LICENSE_KEY=your-license-key
-```
-
-## Example Output
-
-```json
+$ iampg run -- aws s3 cp data.csv s3://my-bucket/uploads/
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject"
-      ],
-      "Resource": "arn:aws:s3:::my-bucket/*"
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::my-bucket/uploads/data.csv"
     }
   ]
 }
 ```
 
-## How it works
+### Parse existing errors
 
-**Run mode:** Parses AWS CLI arguments to determine which IAM actions are being invoked and extracts resource ARNs from the command.
+```bash
+# From an AccessDenied error
+iampg parse --error "User: arn:aws:iam::123:user/dev is not authorized to perform: s3:GetObject on resource: arn:aws:s3:::bucket/key"
 
-**Parse mode:** Uses regex patterns to extract service, action, and resource from CloudTrail events or AccessDenied error messages.
+# From CloudTrail logs
+iampg parse --cloudtrail trail.json
 
-**Refine mode:** Analyzes policies for security issues like wildcards, overly broad permissions, and dangerous actions.
+# From stdin
+cat errors.log | iampg parse --stdin
+```
+
+### Analyze a policy (Pro)
+
+```bash
+$ iampg refine --input policy.json
+
+Policy Analysis
+===============
+
+Statements: 2
+Issues: 3
+
+Issues Found:
+  [wildcard-action] Statement grants all actions for service: s3:*
+     -> Replace s3:* with specific actions
+  [wildcard-resource] Statement applies to all resources (*)
+     -> Scope to specific resource ARNs
+  [dangerous-permission] Potentially dangerous permission: iam:CreateUser
+     -> Can create new IAM users
+```
+
+### Detect drift (Pro)
+
+```bash
+$ iampg refine --input current.json --compare baseline.json
+
+Policy Diff
+===========
+
+Added (2):
+  + s3:DeleteObject on arn:aws:s3:::bucket/*
+  + s3:PutObject on arn:aws:s3:::bucket/*
+```
+
+### Enforce in CI (Pro)
+
+```bash
+# Exit code 1 if security issues found
+iampg refine --input policy.json --enforce
+```
+
+### Aggregate multiple runs (Pro)
+
+```bash
+iampg aggregate --files policy1.json,policy2.json --output combined.json
+```
+
+### Output formats
+
+```bash
+# JSON (default, free)
+iampg run -- aws s3 ls
+
+# YAML (Pro)
+iampg run --format yaml -- aws s3 ls
+
+# Terraform (Pro)
+iampg run --format terraform --resource-name deploy_policy -- aws s3 ls
+
+# SARIF for CI security scanners (Pro)
+iampg run --format sarif -- aws s3 ls
+```
+
+---
+
+## Commands
+
+| Command | Description | Tier |
+|---------|-------------|------|
+| `run -- <cmd>` | Generate policy from AWS CLI command | Free |
+| `parse` | Generate policy from CloudTrail logs or AccessDenied errors | Free |
+| `refine` | Analyze policies for security issues, drift detection, CI enforcement | Pro |
+| `aggregate` | Combine multiple policies into one | Pro |
+
+---
+
+## Pricing
+
+| Feature | Free | Pro | Commercial |
+|---------|------|-----|------------|
+| | $0 | $19/mo or $149/yr | $149/yr |
+| `run` + `parse` commands | yes | yes | yes |
+| JSON output | yes | yes | yes |
+| YAML / Terraform / SARIF output | | yes | yes |
+| `refine` + `aggregate` commands | | yes | yes |
+| Policy diff / drift detection | | yes | yes |
+| CI enforcement (`--enforce`) | | yes | yes |
+| AGPL-3.0 exemption | | | yes |
+
+**Pro** is for individual developers and open source projects.
+**Commercial** is for organizations that need an AGPL exemption for proprietary use.
+
+```bash
+export IAMPG_LICENSE_KEY=your-license-key
+```
+
+---
+
+## Supported Services
+
+Tested against real AWS accounts:
+
+Services with dedicated resource ARN extraction:
+
+- S3 (`s3`, `s3api`)
+- DynamoDB
+- Lambda
+- SQS
+- SNS
+- STS
+- IAM
+- Secrets Manager
+- SSM Parameter Store
+- CloudWatch Logs
+- KMS
+
+All other AWS services (EC2, ECS, Glue, Athena, etc.) are supported via generic action parsing with `Resource: "*"`.
+
+---
+
+## How It Works
+
+1. **Run mode**: Parses AWS CLI arguments to determine IAM actions and extracts resource ARNs
+2. **Parse mode**: Regex patterns extract service, action, and resource from errors/logs
+3. **Refine mode**: Static analysis detects wildcards, dangerous permissions, and policy drift
+4. **All processing is local**: No data sent anywhere
+
+---
 
 ## Security
 
-- **No credential storage** - Uses your existing AWS credentials
-- **No network calls** - All processing is local
-- **No telemetry** - Nothing is sent anywhere
-- **Offline license validation** - No phone-home required
+- **No credential storage** -- Uses your existing AWS credentials
+- **No network calls** -- All processing happens locally
+- **No telemetry** -- Nothing is sent anywhere
+- **Offline license validation** -- Ed25519 signatures, no phone-home
+
+---
+
+## License
+
+This project is licensed under [AGPL-3.0](COPYING).
+
+**What this means:**
+- You can freely use, modify, and distribute iampg
+- If you modify iampg and offer it as a service, you must share your modifications
+- Using iampg as a CLI tool or in CI/CD does **not** require sharing your code
+
+**Commercial licenses** are available for organizations that need an AGPL exemption. See [Pricing](#pricing).
+
+---
+
+## Contributing
+
+Issues and PRs welcome at [github.com/LeRedTeam/iampg](https://github.com/LeRedTeam/iampg).
+
+By submitting a PR, you agree to license your contribution under AGPL-3.0.

@@ -1,5 +1,5 @@
 name: 'IAM Auto-Policy Generator'
-description: 'Generate minimal IAM policies by observing AWS API calls or parsing logs'
+description: 'Enforce least-privilege IAM policies in your CI/CD pipeline'
 author: 'LeRedTeam'
 
 branding:
@@ -8,7 +8,7 @@ branding:
 
 inputs:
   mode:
-    description: 'Mode: run or parse'
+    description: 'Mode: run, parse, or refine'
     required: true
   command:
     description: 'Command to run (for mode: run)'
@@ -19,16 +19,35 @@ inputs:
   error:
     description: 'AccessDenied error message (for mode: parse)'
     required: false
+  input:
+    description: 'Input policy file (for mode: refine)'
+    required: false
+  compare:
+    description: 'Baseline policy to compare against (for mode: refine)'
+    required: false
+  enforce:
+    description: 'Fail if security issues found (for mode: refine)'
+    required: false
+    default: 'false'
+  format:
+    description: 'Output format: json, yaml, terraform, sarif'
+    required: false
+    default: 'json'
   output:
     description: 'Output file path for generated policy'
     required: false
     default: 'policy.json'
+  license-key:
+    description: 'IAMPG license key for Pro/Commercial features'
+    required: false
 
 outputs:
   policy:
     description: 'Generated IAM policy JSON'
   policy-file:
     description: 'Path to the generated policy file'
+  issues-found:
+    description: 'Whether security issues were found (for mode: refine)'
 
 runs:
   using: 'composite'
@@ -50,34 +69,93 @@ runs:
         fi
 
         if [ "$VERSION" = "latest" ]; then
-          DOWNLOAD_URL="https://github.com/LeRedTeam/iampg/releases/latest/download/iampg_${OS}_${ARCH}.tar.gz"
+          # Get actual version from latest release
+          LATEST_TAG=$(curl -sSL -o /dev/null -w '%{url_effective}' https://github.com/LeRedTeam/iampg/releases/latest | grep -oE '[^/]+$')
+          BASE_URL="https://github.com/LeRedTeam/iampg/releases/download/${LATEST_TAG}"
+          ARCHIVE="iampg_${LATEST_TAG#v}_${OS}_${ARCH}.tar.gz"
         else
-          DOWNLOAD_URL="https://github.com/LeRedTeam/iampg/releases/download/${VERSION}/iampg_${VERSION#v}_${OS}_${ARCH}.tar.gz"
+          BASE_URL="https://github.com/LeRedTeam/iampg/releases/download/${VERSION}"
+          ARCHIVE="iampg_${VERSION#v}_${OS}_${ARCH}.tar.gz"
         fi
 
-        curl -sSL "$DOWNLOAD_URL" | tar xz
+        # Download binary and checksums
+        curl -sSL "${BASE_URL}/${ARCHIVE}" -o "${ARCHIVE}"
+        curl -sSL "${BASE_URL}/checksums.txt" -o checksums.txt
+
+        # Verify checksum
+        EXPECTED=$(grep "${ARCHIVE}" checksums.txt | awk '{print $1}')
+        if command -v sha256sum >/dev/null 2>&1; then
+          ACTUAL=$(sha256sum "${ARCHIVE}" | awk '{print $1}')
+        else
+          ACTUAL=$(shasum -a 256 "${ARCHIVE}" | awk '{print $1}')
+        fi
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "::error::Checksum verification failed for ${ARCHIVE}"
+          exit 1
+        fi
+
+        tar xzf "${ARCHIVE}"
         chmod +x iampg
-        sudo mv iampg /usr/local/bin/
+        mv iampg /usr/local/bin/
+        rm -f "${ARCHIVE}" checksums.txt
 
     - name: Run iampg
       shell: bash
+      env:
+        IAMPG_LICENSE_KEY: ${{ inputs.license-key }}
+        IAMPG_COMMAND: ${{ inputs.command }}
+        IAMPG_MODE: ${{ inputs.mode }}
+        IAMPG_CLOUDTRAIL: ${{ inputs.cloudtrail }}
+        IAMPG_ERROR: ${{ inputs.error }}
+        IAMPG_INPUT: ${{ inputs.input }}
+        IAMPG_COMPARE: ${{ inputs.compare }}
+        IAMPG_ENFORCE: ${{ inputs.enforce }}
+        IAMPG_FORMAT: ${{ inputs.format }}
+        IAMPG_OUTPUT: ${{ inputs.output }}
       run: |
-        if [ "${{ inputs.mode }}" = "run" ]; then
-          iampg run --output "${{ inputs.output }}" -- ${{ inputs.command }}
-        elif [ "${{ inputs.mode }}" = "parse" ]; then
-          if [ -n "${{ inputs.cloudtrail }}" ]; then
-            iampg parse --cloudtrail "${{ inputs.cloudtrail }}" --output "${{ inputs.output }}"
-          elif [ -n "${{ inputs.error }}" ]; then
-            iampg parse --error "${{ inputs.error }}" --output "${{ inputs.output }}"
+        if [ "$IAMPG_MODE" = "run" ]; then
+          iampg run --output "$IAMPG_OUTPUT" --format "$IAMPG_FORMAT" -- $IAMPG_COMMAND
+        elif [ "$IAMPG_MODE" = "parse" ]; then
+          if [ -n "$IAMPG_CLOUDTRAIL" ]; then
+            iampg parse --cloudtrail "$IAMPG_CLOUDTRAIL" --output "$IAMPG_OUTPUT" --format "$IAMPG_FORMAT"
+          elif [ -n "$IAMPG_ERROR" ]; then
+            iampg parse --error "$IAMPG_ERROR" --output "$IAMPG_OUTPUT" --format "$IAMPG_FORMAT"
+          fi
+        elif [ "$IAMPG_MODE" = "refine" ]; then
+          REFINE_ARGS="--input $IAMPG_INPUT"
+          if [ -n "$IAMPG_COMPARE" ]; then
+            REFINE_ARGS="$REFINE_ARGS --compare $IAMPG_COMPARE"
+          fi
+          if [ "$IAMPG_ENFORCE" = "true" ]; then
+            REFINE_ARGS="$REFINE_ARGS --enforce"
+          fi
+          # refine only accepts text or json; map other formats to json
+          REFINE_FORMAT="$IAMPG_FORMAT"
+          if [ "$REFINE_FORMAT" != "text" ] && [ "$REFINE_FORMAT" != "json" ]; then
+            REFINE_FORMAT="text"
+          fi
+          REFINE_ARGS="$REFINE_ARGS --format $REFINE_FORMAT"
+          set +e
+          iampg refine $REFINE_ARGS
+          REFINE_EXIT=$?
+          set -e
+          if [ $REFINE_EXIT -ne 0 ]; then
+            echo "issues-found=true" >> $GITHUB_OUTPUT
+            exit $REFINE_EXIT
+          else
+            echo "issues-found=false" >> $GITHUB_OUTPUT
           fi
         fi
 
     - name: Set outputs
       shell: bash
+      env:
+        IAMPG_OUTPUT: ${{ inputs.output }}
       run: |
-        echo "policy-file=${{ inputs.output }}" >> $GITHUB_OUTPUT
-        if [ -f "${{ inputs.output }}" ]; then
-          echo "policy<<EOF" >> $GITHUB_OUTPUT
-          cat "${{ inputs.output }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+        echo "policy-file=$IAMPG_OUTPUT" >> $GITHUB_OUTPUT
+        if [ -f "$IAMPG_OUTPUT" ]; then
+          DELIM="IAMPG_$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
+          echo "policy<<${DELIM}" >> $GITHUB_OUTPUT
+          cat "$IAMPG_OUTPUT" >> $GITHUB_OUTPUT
+          echo "${DELIM}" >> $GITHUB_OUTPUT
         fi
