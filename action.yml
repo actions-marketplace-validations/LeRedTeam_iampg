@@ -1,4 +1,4 @@
-name: 'IAM Auto-Policy Generator'
+name: 'iampg - Enforce IAM Least-Privilege'
 description: 'Enforce least-privilege IAM policies in your CI/CD pipeline'
 author: 'LeRedTeam'
 
