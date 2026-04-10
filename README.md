@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://leredteam.github.io/LeRedLogo.jpeg" alt="LeRedTeam" width="80">
+</p>
+
 # iampg — IAM Policy Guard
 
 **Enforce least-privilege IAM in every PR.**
