@@ -1,0 +1,35 @@
+name: Update major version tag
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  major-tag:
+    if: github.event.release.prerelease == false && github.event.release.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Move major tag to release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          MAJOR=$(echo "$TAG" | sed -nE 's/^(v[0-9]+)\.[0-9]+\.[0-9]+$/\1/p')
+          if [ -z "$MAJOR" ]; then
+            echo "Tag '$TAG' is not vMAJOR.MINOR.PATCH; skipping."
+            exit 0
+          fi
+          SHA=$(gh api "repos/$REPO/commits/$TAG" --jq '.sha')
+          if gh api "repos/$REPO/git/ref/tags/$MAJOR" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$MAJOR" \
+              -f sha="$SHA" -F force=true
+            echo "Moved $MAJOR -> $SHA"
+          else
+            gh api -X POST "repos/$REPO/git/refs" \
+              -f ref="refs/tags/$MAJOR" -f sha="$SHA"
+            echo "Created $MAJOR -> $SHA"
+          fi
